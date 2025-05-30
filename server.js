@@ -3,7 +3,7 @@ const { MongoClient } = require('mongodb');
 const cors = require('cors');
 
 const app = express();
-const PORT = process.env.PORT || 3006;
+const PORT = process.env.PORT || 3000;
 
 // MongoDB connection configuration
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017';
@@ -11,17 +11,6 @@ const DATABASE_NAME = 'off';
 const COLLECTION_NAME = 'products';
 
 let db;
-
-// Helper function to get UTC timestamp
-function getUTCTimestamp() {
-  return new Date().toISOString();
-}
-
-// Helper function for consistent logging
-function logRequest(endpoint, details = {}) {
-  const timestamp = getUTCTimestamp();
-  console.log(`[${timestamp}] ${endpoint}:`, details);
-}
 
 // Middleware
 app.use(cors());
@@ -42,12 +31,10 @@ async function connectToMongo() {
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  logRequest('GET /health', { ip: req.ip });
-  
   res.json({ 
     status: 'OK', 
     database: db ? 'Connected' : 'Disconnected',
-    timestamp: getUTCTimestamp()
+    timestamp: new Date().toISOString()
   });
 });
 
@@ -67,24 +54,11 @@ function normalizeBarcode(barcode) {
 
 // Get product by barcode
 app.get('/product/:barcode', async (req, res) => {
-  const startTime = Date.now();
-  
   try {
     const inputBarcode = req.params.barcode;
     
-    logRequest('GET /product/:barcode', { 
-      barcode: inputBarcode, 
-      ip: req.ip,
-      userAgent: req.get('User-Agent')
-    });
-    
     // Validate barcode (basic validation)
     if (!inputBarcode || inputBarcode.length < 8 || inputBarcode.length > 14) {
-      logRequest('GET /product/:barcode - VALIDATION ERROR', { 
-        barcode: inputBarcode,
-        error: 'Invalid barcode length'
-      });
-      
       return res.status(400).json({
         error: 'Invalid barcode',
         message: 'Barcode must be between 8 and 14 digits'
@@ -93,11 +67,6 @@ app.get('/product/:barcode', async (req, res) => {
 
     // Normalize the barcode (convert UPC-A to EAN-13 if needed)
     const normalizedBarcode = normalizeBarcode(inputBarcode);
-    
-    logRequest('GET /product/:barcode - NORMALIZED', { 
-      original: inputBarcode,
-      normalized: normalizedBarcode
-    });
     
     // Try multiple barcode formats
     const collection = db.collection(COLLECTION_NAME);
@@ -114,27 +83,19 @@ app.get('/product/:barcode', async (req, res) => {
       product = await collection.findOne({ code: withoutLeadingZero });
     }
 
-    const queryTime = Date.now() - startTime;
-
     if (!product) {
-      logRequest('GET /product/:barcode - NOT FOUND', { 
-        barcode: inputBarcode,
-        normalized: normalizedBarcode,
-        queryTime: `${queryTime}ms`
-      });
-      
       return res.status(404).json({
         error: 'Product not found',
         message: `No product found with barcode: ${inputBarcode} (also tried: ${normalizedBarcode})`
       });
     }
 
-    logRequest('GET /product/:barcode - SUCCESS', { 
-      barcode: inputBarcode,
-      found: product.code,
-      productName: product.product_name || 'Unknown',
-      queryTime: `${queryTime}ms`
-    });
+    // Return clean product data
+    res.json({
+      success: true,
+      barcode_searched: inputBarcode,
+      barcode_found: product.code,
+      product: {
         barcode: product.code,
         name: product.product_name || 'Unknown',
         brands: product.brands || 'Unknown',
@@ -160,14 +121,6 @@ app.get('/product/:barcode', async (req, res) => {
     });
 
   } catch (error) {
-    const queryTime = Date.now() - startTime;
-    
-    logRequest('GET /product/:barcode - ERROR', { 
-      barcode: req.params.barcode,
-      error: error.message,
-      queryTime: `${queryTime}ms`
-    });
-    
     console.error('Error querying product:', error);
     res.status(500).json({
       error: 'Internal server error',
@@ -178,24 +131,11 @@ app.get('/product/:barcode', async (req, res) => {
 
 // Search products by name (bonus endpoint)
 app.get('/search', async (req, res) => {
-  const startTime = Date.now();
-  
   try {
     const query = req.query.q;
     const limit = parseInt(req.query.limit) || 10;
     
-    logRequest('GET /search', { 
-      query: query,
-      limit: limit,
-      ip: req.ip,
-      userAgent: req.get('User-Agent')
-    });
-    
     if (!query) {
-      logRequest('GET /search - VALIDATION ERROR', { 
-        error: 'Missing query parameter'
-      });
-      
       return res.status(400).json({
         error: 'Missing query parameter',
         message: 'Please provide a search query using ?q=your_search_term'
@@ -212,19 +152,10 @@ app.get('/search', async (req, res) => {
       .limit(limit)
       .toArray();
 
-    const queryTime = Date.now() - startTime;
-    
-    logRequest('GET /search - SUCCESS', { 
-      query: query,
-      resultsFound: products.length,
-      queryTime: `${queryTime}ms`
-    });
-
     res.json({
       success: true,
       query: query,
       count: products.length,
-      query_time_ms: queryTime,
       products: products.map(product => ({
         barcode: product.code,
         name: product.product_name,
@@ -236,14 +167,6 @@ app.get('/search', async (req, res) => {
     });
 
   } catch (error) {
-    const queryTime = Date.now() - startTime;
-    
-    logRequest('GET /search - ERROR', { 
-      query: req.query.q,
-      error: error.message,
-      queryTime: `${queryTime}ms`
-    });
-    
     console.error('Error searching products:', error);
     res.status(500).json({
       error: 'Internal server error',
@@ -254,14 +177,7 @@ app.get('/search', async (req, res) => {
 
 // Get database statistics (bonus endpoint)
 app.get('/stats', async (req, res) => {
-  const startTime = Date.now();
-  
   try {
-    logRequest('GET /stats', { 
-      ip: req.ip,
-      userAgent: req.get('User-Agent')
-    });
-    
     const collection = db.collection(COLLECTION_NAME);
     
     const totalProducts = await collection.countDocuments();
@@ -276,16 +192,8 @@ app.get('/stats', async (req, res) => {
       { $limit: 5 }
     ]).toArray();
 
-    const queryTime = Date.now() - startTime;
-    
-    logRequest('GET /stats - SUCCESS', { 
-      totalProducts: totalProducts,
-      queryTime: `${queryTime}ms`
-    });
-
     res.json({
       success: true,
-      query_time_ms: queryTime,
       statistics: {
         total_products: totalProducts,
         products_with_images: productsWithImages,
@@ -295,13 +203,6 @@ app.get('/stats', async (req, res) => {
     });
 
   } catch (error) {
-    const queryTime = Date.now() - startTime;
-    
-    logRequest('GET /stats - ERROR', { 
-      error: error.message,
-      queryTime: `${queryTime}ms`
-    });
-    
     console.error('Error getting stats:', error);
     res.status(500).json({
       error: 'Internal server error',
@@ -312,15 +213,9 @@ app.get('/stats', async (req, res) => {
 
 // Root endpoint with API documentation
 app.get('/', (req, res) => {
-  logRequest('GET /', { 
-    ip: req.ip,
-    userAgent: req.get('User-Agent')
-  });
-  
   res.json({
     message: 'Open Food Facts API Server',
     version: '1.0.0',
-    server_time: getUTCTimestamp(),
     endpoints: {
       'GET /': 'This documentation',
       'GET /health': 'Health check',
@@ -340,13 +235,11 @@ async function startServer() {
   await connectToMongo();
   
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`\n🚀 Open Food Facts API Server starting...`);
-    console.log(`⏰ Server started at: ${getUTCTimestamp()}`);
-    console.log(`🌐 Server accessible from all IP addresses on port ${PORT}`);
+    console.log(`\n🚀 Open Food Facts API Server running on port ${PORT}`);
+    console.log(`🌐 Server accessible from all IP addresses`);
     console.log(`📖 API Documentation: http://localhost:${PORT}/`);
     console.log(`🔍 Example product lookup: http://localhost:${PORT}/product/3017620422003`);
     console.log(`📊 Database stats: http://localhost:${PORT}/stats`);
-    console.log(`📝 All requests will be logged with UTC timestamps\n`);
   });
 }
 
