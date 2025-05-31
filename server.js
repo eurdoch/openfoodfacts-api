@@ -16,6 +16,25 @@ let db;
 app.use(cors());
 app.use(express.json());
 
+// Request logging middleware
+app.use((req, res, next) => {
+  const timestamp = new Date().toISOString();
+  const method = req.method;
+  const url = req.originalUrl;
+  const userAgent = req.get('User-Agent') || 'Unknown';
+  
+  console.log(`[${timestamp}] ${method} ${url} - ${req.ip} - ${userAgent}`);
+  
+  // Log response when finished
+  res.on('finish', () => {
+    const duration = Date.now() - req.startTime;
+    console.log(`[${timestamp}] ${method} ${url} - ${res.statusCode} - ${duration}ms`);
+  });
+  
+  req.startTime = Date.now();
+  next();
+});
+
 // Connect to MongoDB
 async function connectToMongo() {
   try {
