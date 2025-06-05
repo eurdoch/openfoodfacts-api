@@ -166,7 +166,7 @@ app.get('/search', async (req, res) => {
     // Search by product name (case insensitive)
     const products = await collection
       .find({ 
-        product_name: { $regex: query, $options: 'i' }
+	$text: { $search: query }
       })
       .limit(limit)
       .toArray();
